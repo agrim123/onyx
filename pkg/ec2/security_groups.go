@@ -130,19 +130,22 @@ func ListSecurityGroup(ctx context.Context, cfg aws.Config, env string) (*[]Secu
 
 func GetSecurityGroup(ctx context.Context, cfg aws.Config, sgID string) {
 	sg := DescribeSecurityGroup(ctx, cfg, sgID)
-	fmt.Println(fmt.Sprintf("%s (%s): %s", *sg.GroupName, *sg.GroupId, *sg.Description))
-	fmt.Println("Rules:")
-	fmt.Println("|------------------------------------------")
+	fmt.Println("|-----------------------------------------------------")
+	fmt.Println(fmt.Sprintf("| %s (%s)", *sg.GroupName, *sg.GroupId))
+	fmt.Println("| Description:", *sg.Description)
+	fmt.Println("| Rules:")
+	fmt.Println("|  |------------------------------------------")
 	for _, ipPermission := range sg.IpPermissions {
 		for _, ipRange := range ipPermission.IpRanges {
-			fmt.Println(fmt.Sprintf("| %d -> %d (%s): %s - %s", ipPermission.FromPort, ipPermission.ToPort, *ipPermission.IpProtocol, *ipRange.CidrIp, aws.ToString(ipRange.Description)))
+			fmt.Println(fmt.Sprintf("|  | %d -> %d (%s): %s - %s", ipPermission.FromPort, ipPermission.ToPort, *ipPermission.IpProtocol, *ipRange.CidrIp, aws.ToString(ipRange.Description)))
 		}
 
 		for _, a := range ipPermission.UserIdGroupPairs {
-			fmt.Println(fmt.Sprintf("| %d -> %d (%s): %s - %v", ipPermission.FromPort, ipPermission.ToPort, *ipPermission.IpProtocol, *a.GroupId, aws.ToString(a.Description)))
+			fmt.Println(fmt.Sprintf("|  | %d -> %d (%s): %s - %v", ipPermission.FromPort, ipPermission.ToPort, *ipPermission.IpProtocol, *a.GroupId, aws.ToString(a.Description)))
 		}
 	}
-	fmt.Println("|------------------------------------------")
+	fmt.Println("|  |------------------------------------------")
+	fmt.Println("|-----------------------------------------------------")
 }
 
 func DescribeSecurityGroup(ctx context.Context, cfg aws.Config, sgID string) *types.SecurityGroup {
