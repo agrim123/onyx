@@ -83,15 +83,13 @@ func SelectSecurityGroups(ctx context.Context, cfg aws.Config, env string) (*[]S
 
 	fmt.Println("Select security groups:")
 	for i, securityGroup := range *securityGroups {
-		fmt.Println(i, ":", securityGroup.ID, "(", securityGroup.Name, ")")
+		fmt.Println(logger.Bold(i), ":", securityGroup.ID, "(", logger.Italic(securityGroup.Name), ")")
 	}
 
-	var indexes string
-	fmt.Print("Enter choice: ")
-	fmt.Scanf("%s", &indexes)
+	indexes := logger.InfoScan("Enter choice: ")
 
 	if len(indexes) == 0 {
-		return nil, errors.New("Invalid choice")
+		return nil, errors.New(logger.Bold("Invalid choice"))
 	}
 
 	selectedSecurityGroups := make([]SecurityGroup, 0)
@@ -130,8 +128,9 @@ func ListSecurityGroup(ctx context.Context, cfg aws.Config, env string) (*[]Secu
 
 func GetSecurityGroup(ctx context.Context, cfg aws.Config, sgID string) {
 	sg := DescribeSecurityGroup(ctx, cfg, sgID)
+	logger.Info("Current state of security group: " + sgID)
 	fmt.Println("|-----------------------------------------------------")
-	fmt.Println(fmt.Sprintf("| %s (%s)", *sg.GroupName, *sg.GroupId))
+	fmt.Println(fmt.Sprintf("| %s (%s)", logger.Bold(*sg.GroupName), *sg.GroupId))
 	fmt.Println("| Description:", *sg.Description)
 	fmt.Println("| Rules:")
 	fmt.Println("|  |------------------------------------------")
@@ -217,6 +216,7 @@ func (sg *SecurityGroupRule) Authorize(ctx context.Context, cfg aws.Config) {
 
 func (sg *SecurityGroupRule) Revoke(ctx context.Context, cfg aws.Config, rules []types.IpRange) error {
 	logger.Info("Revoking old rules...")
+
 	ec2Handler := ec2Lib.NewFromConfig(cfg)
 	output, err := ec2Handler.RevokeSecurityGroupIngress(ctx, &ec2Lib.RevokeSecurityGroupIngressInput{
 		DryRun:  sg.DryRun,
