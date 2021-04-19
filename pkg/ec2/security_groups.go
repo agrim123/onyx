@@ -24,6 +24,7 @@ var allowedRules = map[string]int32{
 type SecurityGroup struct {
 	ID   string
 	Name string
+	Tags []types.Tag
 }
 
 type SecurityGroupRule struct {
@@ -103,13 +104,17 @@ func SelectSecurityGroups(ctx context.Context, cfg aws.Config, env string) (*[]S
 
 func ListSecurityGroup(ctx context.Context, cfg aws.Config, env string) (*[]SecurityGroup, error) {
 	ec2Handler := ec2Lib.NewFromConfig(cfg)
+	filters := make([]types.Filter, 0)
+
+	if env != "" {
+		filters = append(filters, types.Filter{
+			Name:   aws.String("tag:Environment"),
+			Values: []string{env},
+		})
+	}
+
 	output, err := ec2Handler.DescribeSecurityGroups(ctx, &ec2Lib.DescribeSecurityGroupsInput{
-		Filters: []types.Filter{
-			{
-				Name:   aws.String("tag:Environment"),
-				Values: []string{env},
-			},
-		},
+		Filters: filters,
 	})
 	if err != nil {
 		return nil, err
@@ -120,6 +125,7 @@ func ListSecurityGroup(ctx context.Context, cfg aws.Config, env string) (*[]Secu
 		securityGroups[i] = SecurityGroup{
 			ID:   *securityGroup.GroupId,
 			Name: *securityGroup.GroupName,
+			Tags: securityGroup.Tags,
 		}
 	}
 

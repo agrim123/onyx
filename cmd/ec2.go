@@ -9,11 +9,13 @@ import (
 
 	"github.com/agrim123/onyx/pkg/ec2"
 	"github.com/agrim123/onyx/pkg/iam"
+	"github.com/agrim123/onyx/pkg/logger"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/spf13/cobra"
 )
 
 var securityGroupIngressType string
+var securityGroupEnv string
 
 var ec2Command = &cobra.Command{
 	Use:   "ec2",
@@ -49,7 +51,7 @@ var ec2sgListCommand = &cobra.Command{
 	Use:     "list",
 	Short:   "Lists security groups by environment",
 	Long:    ``,
-	Args:    cobra.MinimumNArgs(1),
+	Args:    cobra.NoArgs,
 	Example: "onyx ec2 sg list staging",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion("us-east-1"))
@@ -58,14 +60,14 @@ var ec2sgListCommand = &cobra.Command{
 		}
 		ctx := context.Background()
 
-		securityGroups, err := ec2.ListSecurityGroup(ctx, cfg, strings.Title(strings.ToLower(args[0])))
+		securityGroups, err := ec2.ListSecurityGroup(ctx, cfg, strings.Title(strings.ToLower(securityGroupEnv)))
 		if err != nil {
 			return err
 		}
 
-		fmt.Println("Security groups: (Environment: " + strings.Title(strings.ToLower(args[0])) + ")")
+		fmt.Println("Security groups: (Environment: " + logger.Bold(strings.Title(strings.ToLower(securityGroupEnv))) + ")")
 		for _, securityGroup := range *securityGroups {
-			fmt.Println(securityGroup.ID, "(", securityGroup.Name, ")")
+			fmt.Println(securityGroup.ID, "(", logger.Italic(securityGroup.Name), ")")
 		}
 
 		return nil
@@ -167,6 +169,7 @@ var ec2sgRevokeCommand = &cobra.Command{
 func init() {
 	ec2Command.AddCommand(ec2SgCommand)
 	ec2SgCommand.AddCommand(ec2sgAuthorizeCommand, ec2sgRevokeCommand, ec2sgDescribeCommand, ec2sgListCommand)
+	ec2sgListCommand.Flags().StringVarP(&securityGroupEnv, "env", "e", "", "Environment for which to list. Allowed values production|staging")
 	ec2sgAuthorizeCommand.Flags().StringVarP(&securityGroupIngressType, "type", "t", "", "Type of rule to authorize. Allowed ssh|redis|mongo (required)")
 	ec2sgAuthorizeCommand.MarkFlagRequired("type")
 	ec2sgRevokeCommand.Flags().StringVarP(&securityGroupIngressType, "type", "t", "", "Type of rule to authorize. Allowed ssh|redis|mongo (required)")
