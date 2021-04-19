@@ -36,7 +36,7 @@ type SecurityGroupRule struct {
 
 func NewSecurityGroupRule(id, typeStr, user string) (*SecurityGroupRule, error) {
 	if _, ok := allowedRules[strings.ToLower(typeStr)]; !ok {
-		return nil, errors.New("Invalid type. Allowed values: ssh|redis|mongo")
+		return nil, errors.New("Invalid type. Allowed values: ssh|redis|mongo|mysql")
 	}
 
 	return &SecurityGroupRule{
@@ -72,7 +72,7 @@ func (sg *SecurityGroupRule) getIpPermissions(cidrs []*string, port int32, user 
 }
 
 func (sg *SecurityGroupRule) Describe(ctx context.Context, cfg aws.Config) {
-	GetSecurityGroup(ctx, cfg, sg.ID)
+	GetSecurityGroup(ctx, cfg, sg.ID, *sg)
 }
 
 func SelectSecurityGroups(ctx context.Context, cfg aws.Config, env string) (*[]SecurityGroup, error) {
@@ -126,9 +126,9 @@ func ListSecurityGroup(ctx context.Context, cfg aws.Config, env string) (*[]Secu
 	return &securityGroups, nil
 }
 
-func GetSecurityGroup(ctx context.Context, cfg aws.Config, sgID string) {
+func GetSecurityGroup(ctx context.Context, cfg aws.Config, sgID string, sgRule SecurityGroupRule) {
 	sg := DescribeSecurityGroup(ctx, cfg, sgID)
-	logger.Info("Current state of security group: " + sgID)
+	logger.Info("Current state of security group: " + logger.Bold(sgID))
 	fmt.Println("|-----------------------------------------------------")
 	fmt.Println(fmt.Sprintf("| %s (%s)", logger.Bold(*sg.GroupName), *sg.GroupId))
 	fmt.Println("| Description:", *sg.Description)
@@ -136,7 +136,11 @@ func GetSecurityGroup(ctx context.Context, cfg aws.Config, sgID string) {
 	fmt.Println("|  |------------------------------------------")
 	for _, ipPermission := range sg.IpPermissions {
 		for _, ipRange := range ipPermission.IpRanges {
-			fmt.Println(fmt.Sprintf("|  | %d -> %d (%s): %s - %s", ipPermission.FromPort, ipPermission.ToPort, *ipPermission.IpProtocol, *ipRange.CidrIp, aws.ToString(ipRange.Description)))
+			if *ipRange.Description == sgRule.enrichRuleDescription() {
+				fmt.Println(logger.Bold(fmt.Sprintf("|  | %d -> %d (%s): %s - %s", ipPermission.FromPort, ipPermission.ToPort, *ipPermission.IpProtocol, *ipRange.CidrIp, aws.ToString(ipRange.Description))))
+			} else {
+				fmt.Println(fmt.Sprintf("|  | %d -> %d (%s): %s - %s", ipPermission.FromPort, ipPermission.ToPort, *ipPermission.IpProtocol, *ipRange.CidrIp, aws.ToString(ipRange.Description)))
+			}
 		}
 
 		for _, a := range ipPermission.UserIdGroupPairs {
@@ -210,12 +214,12 @@ func (sg *SecurityGroupRule) Authorize(ctx context.Context, cfg aws.Config) {
 		panic(err)
 	}
 
-	logger.Info("Authorized new rules")
+	logger.Info("Authorized new rules for %s", logger.Bold(sg.ID))
 	sg.Describe(ctx, cfg)
 }
 
 func (sg *SecurityGroupRule) Revoke(ctx context.Context, cfg aws.Config, rules []types.IpRange) error {
-	logger.Info("Revoking old rules...")
+	logger.Info("Revoking old rules for %s", logger.Bold(sg.ID))
 
 	ec2Handler := ec2Lib.NewFromConfig(cfg)
 	output, err := ec2Handler.RevokeSecurityGroupIngress(ctx, &ec2Lib.RevokeSecurityGroupIngressInput{
@@ -235,7 +239,7 @@ func (sg *SecurityGroupRule) Revoke(ctx context.Context, cfg aws.Config, rules [
 	}
 
 	if output.Return {
-		logger.Info("Revoked old rules")
+		logger.Info("Revoked old rules for %s", logger.Bold(sg.ID))
 		sg.Describe(ctx, cfg)
 		return nil
 	}

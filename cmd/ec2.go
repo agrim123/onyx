@@ -22,7 +22,7 @@ var ec2Command = &cobra.Command{
 
 var ec2SgCommand = &cobra.Command{
 	Use:   "sg",
-	Short: "Authorizes or revokes the security group rules",
+	Short: "Lists, Authorizes or Revokes the security group rules",
 	Long:  ``,
 }
 
@@ -39,7 +39,7 @@ var ec2sgDescribeCommand = &cobra.Command{
 		}
 		ctx := context.Background()
 
-		ec2.GetSecurityGroup(ctx, cfg, args[0])
+		ec2.GetSecurityGroup(ctx, cfg, args[0], ec2.SecurityGroupRule{})
 
 		return nil
 	},
