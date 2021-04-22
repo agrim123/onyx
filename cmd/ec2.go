@@ -99,7 +99,7 @@ var ec2sgListCommand = &cobra.Command{
 var ec2sgAuthorizeCommand = &cobra.Command{
 	Use:     "authorize [environment | security-group-id] {[--types types] | [--ports ports]}",
 	Short:   "Authorizes security group rules",
-	Long:    ``,
+	Long:    `Given a pair of types or ports or both, it revokes old rules and authorizes new ingress rules with your public IP.`,
 	Args:    cobra.MinimumNArgs(1),
 	Example: "onyx ec2 sg authorize production -t ssh\nonyx ec2 sg authorize staging -t ssh,mongo,redis\nonyx ec2 sg authorize sg-ajvjTUf581ig1 -t ssh,mongo,redis",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -126,7 +126,7 @@ var ec2sgAuthorizeCommand = &cobra.Command{
 var ec2sgRevokeCommand = &cobra.Command{
 	Use:     "revoke [environment | security-group-id] {[--types types] | [--ports ports]}",
 	Short:   "Revokes the security group rules",
-	Long:    ``,
+	Long:    `Given a pair of types or ports or both, it revokes old rules.`,
 	Args:    cobra.MinimumNArgs(1),
 	Example: "onyx ec2 sg revoke staging -t redis",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -160,11 +160,9 @@ func init() {
 	ec2sgDescribeCommand.Flags().StringVarP(&securityGroupEnv, "env", "e", "", "Environment for which to describe. Allowed values production|staging")
 	ec2sgDescribeCommand.Flags().StringVarP(&securityGroupID, "id", "i", "", "Security group ID to describe")
 
-	ec2sgAuthorizeCommand.Flags().StringVarP(&securityGroupIngressTypes, "types", "t", "", "Types of rule to authorize. Allowed ssh|redis|mongo|mysql (required)")
-	ec2sgAuthorizeCommand.Flags().StringVarP(&securityGroupIngressPorts, "ports", "p", "", "Ports to authorize. Allowed values 0-65536")
-	ec2sgAuthorizeCommand.Flags().StringVarP(&securityGroupID, "id", "i", "", "Security group ID to change")
+	ec2sgAuthorizeCommand.Flags().StringVarP(&securityGroupIngressTypes, "types", "t", "", "Types of rule to authorize. Allowed ssh|redis|mongo|mysql (required). Accepted input: comma separated types, example: ssh, mysql.")
+	ec2sgAuthorizeCommand.Flags().StringVarP(&securityGroupIngressPorts, "ports", "p", "", "Ports to authorize. Allowed values 0-65536.  Accepted input: comma separated ports, example: 22, 1331.")
 
-	ec2sgRevokeCommand.Flags().StringVarP(&securityGroupIngressTypes, "types", "t", "", "Types of rule to authorize. Allowed ssh|redis|mongo|mysql (required)")
-	ec2sgRevokeCommand.Flags().StringVarP(&securityGroupIngressPorts, "ports", "p", "", "Ports to authorize. Allowed values 0-65536")
-	ec2sgRevokeCommand.Flags().StringVarP(&securityGroupID, "id", "i", "", "Security group ID to change")
+	ec2sgRevokeCommand.Flags().StringVarP(&securityGroupIngressTypes, "types", "t", "", "Types of rule to authorize. Allowed ssh|redis|mongo|mysql (required). Accepted input: comma separated types, example: ssh, mysql.")
+	ec2sgRevokeCommand.Flags().StringVarP(&securityGroupIngressPorts, "ports", "p", "", "Ports to authorize. Allowed values 0-65536.  Accepted input: comma separated ports, example: 22, 1331.")
 }
