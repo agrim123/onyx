@@ -4,7 +4,7 @@ import (
 	"context"
 	"log"
 
-	"github.com/agrim123/onyx/pkg/ecs"
+	"github.com/agrim123/onyx/pkg/core/ecs"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/spf13/cobra"
 )

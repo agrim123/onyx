@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/agrim123/onyx/pkg/ec2"
+	"github.com/agrim123/onyx/pkg/core/ec2"
 	"github.com/agrim123/onyx/pkg/logger"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/spf13/cobra"

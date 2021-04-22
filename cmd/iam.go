@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"github.com/agrim123/onyx/pkg/iam"
+	"github.com/agrim123/onyx/pkg/core/iam"
 	"github.com/agrim123/onyx/pkg/logger"
 	"github.com/spf13/cobra"
 )
