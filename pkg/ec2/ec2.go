@@ -13,17 +13,17 @@ type Instance struct {
 	PrivateIPv4 string
 }
 
-func DescribeInstances(ctx context.Context, cfg aws.Config, instanceIDs []string) *[]Instance {
+func DescribeInstances(ctx context.Context, cfg aws.Config, instanceIDs []string) (*[]Instance, error) {
 	ec2Handler := ec2Lib.NewFromConfig(cfg)
 
+	instances := make([]Instance, 0)
 	ec2DetailsOutput, err := ec2Handler.DescribeInstances(ctx, &ec2Lib.DescribeInstancesInput{
 		InstanceIds: instanceIDs,
 	})
 	if err != nil {
-		panic(err)
+		return &instances, err
 	}
 
-	instances := make([]Instance, 0)
 	for _, reservation := range ec2DetailsOutput.Reservations {
 		publicIpv4 := ""
 		if reservation.Instances[0].PublicIpAddress != nil {
@@ -37,5 +37,5 @@ func DescribeInstances(ctx context.Context, cfg aws.Config, instanceIDs []string
 		})
 	}
 
-	return &instances
+	return &instances, nil
 }

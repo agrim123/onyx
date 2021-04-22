@@ -1,9 +1,11 @@
 package utils
 
 import (
+	"bufio"
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"os"
 
 	"github.com/agrim123/onyx/pkg/logger"
 )
@@ -26,4 +28,30 @@ func GetPublicIP() string {
 	}
 
 	return fmt.Sprintf("%s/32", string(ip))
+}
+
+func GetChunks(arr []string, chunkSize int) [][]string {
+	if len(arr) == 0 {
+		return nil
+	}
+	chunks := make([][]string, (len(arr)+chunkSize-1)/chunkSize)
+	prev := 0
+	i := 0
+
+	for prev < len(arr)-chunkSize {
+		next := prev + chunkSize
+		chunks[i] = arr[prev:next]
+		prev = next
+		i++
+	}
+
+	chunks[i] = arr[prev:]
+	return chunks
+}
+
+func GetUserInput(message string) string {
+	consoleReader := bufio.NewReader(os.Stdin)
+	fmt.Print(message)
+	input, _ := consoleReader.ReadString('\n')
+	return input
 }
