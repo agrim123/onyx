@@ -12,77 +12,11 @@ import (
 	"github.com/agrim123/onyx/pkg/utils"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	ecsLib "github.com/aws/aws-sdk-go-v2/service/ecs"
-	"github.com/aws/aws-sdk-go-v2/service/ecs/types"
 )
-
-type Cluster struct {
-	Arn                *string
-	Name               string
-	Services           []Service
-	ContainerInstances int
-}
 
 type ContainerInstance struct {
 	Arn      *string
 	Instance ec2.Instance
-}
-
-func (c *Cluster) GetServices(ctx context.Context, cfg aws.Config, serviceName string) error {
-	ecsHandler := ecsLib.NewFromConfig(cfg)
-	allServices := make([]Service, 0)
-
-	allServicesArns := make([]string, 0)
-
-	var nextToken *string
-	for {
-		allServicesOutput, _ := ecsHandler.ListServices(ctx, &ecsLib.ListServicesInput{
-			Cluster:            aws.String(c.Name),
-			NextToken:          nextToken,
-			SchedulingStrategy: types.SchedulingStrategyReplica,
-		})
-
-		allServicesArns = append(allServicesArns, allServicesOutput.ServiceArns...)
-
-		if allServicesOutput.NextToken == nil {
-			break
-		}
-
-		nextToken = allServicesOutput.NextToken
-	}
-
-	requiredServiceArns := make([]string, 0)
-	if serviceName != "" {
-		for _, serviceArn := range allServicesArns {
-			if strings.Contains(serviceArn, serviceName) {
-				requiredServiceArns = append(requiredServiceArns, serviceArn)
-			}
-		}
-	} else {
-		requiredServiceArns = allServicesArns
-	}
-
-	servicesFromAWS := make([]types.Service, 0)
-	for _, chunk := range utils.GetChunks(requiredServiceArns, 9) {
-		servicesOutput, err := ecsHandler.DescribeServices(ctx, &ecsLib.DescribeServicesInput{
-			Cluster:  aws.String(c.Name),
-			Services: chunk,
-		})
-		if err == nil {
-			servicesFromAWS = append(servicesFromAWS, servicesOutput.Services...)
-		}
-	}
-
-	for _, service := range servicesFromAWS {
-		allServices = append(allServices, Service{
-			Arn:               service.ServiceArn,
-			Name:              *service.ServiceName,
-			TaskDefinitionArn: *service.TaskDefinition,
-		})
-	}
-
-	c.Services = allServices
-
-	return nil
 }
 
 func Describe(ctx context.Context, cfg aws.Config, clusterName, serviceName string) error {
@@ -202,31 +136,27 @@ func RedeployService(ctx context.Context, cfg aws.Config, clusterName, serviceNa
 	}
 
 	serviceMap := make(map[string]bool)
-	if serviceName == "" {
-		err := cluster.GetServices(ctx, cfg, serviceName)
-		if err != nil {
-			return err
-		}
+	err := cluster.GetServices(ctx, cfg, serviceName)
+	if err != nil {
+		return err
+	}
 
-		fmt.Println("Cluster Name:", clusterName)
-		fmt.Println("Select service(s) to restart:")
-		for i, service := range cluster.Services {
-			fmt.Println(i, ":", service.Name)
-		}
+	cluster.FilterServicesByName(serviceName)
 
-		indexes := utils.GetUserInput("Enter choice: ")
+	fmt.Println("Cluster Name:", clusterName)
+	fmt.Println("Select service(s) to restart:")
+	for i, service := range cluster.Services {
+		fmt.Println(logger.Bold(i), ":", service.Name)
+	}
 
-		if len(indexes) == 0 {
-			return errors.New("Invalid choice")
-		}
+	indexes := utils.GetUserInput("Enter choice: ")
+	if len(indexes) == 0 {
+		return errors.New("Invalid choice")
+	}
 
-		for _, index := range strings.Split(indexes, ",") {
-			i, _ := strconv.ParseInt(strings.TrimSpace(index), 0, 32)
-			serviceMap[cluster.Services[int(i)].Name] = true
-		}
-
-	} else {
-		serviceMap[serviceName] = true
+	for _, index := range strings.Split(indexes, ",") {
+		i, _ := strconv.ParseInt(strings.TrimSpace(index), 0, 32)
+		serviceMap[cluster.Services[int(i)].Name] = true
 	}
 
 	services := make([]string, 0)
