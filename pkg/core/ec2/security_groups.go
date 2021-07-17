@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/agrim123/onyx/pkg/core/iam"
-	"github.com/agrim123/onyx/pkg/logger"
-	"github.com/agrim123/onyx/pkg/utils"
+	"bitbucket.org/agrim123/onyx/pkg/core/iam"
+	"bitbucket.org/agrim123/onyx/pkg/logger"
+	"bitbucket.org/agrim123/onyx/pkg/utils"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	ec2Lib "github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -18,18 +18,21 @@ import (
 )
 
 var allowedRules = map[string]int32{
-	"ssh":   22,
-	"redis": 6379,
-	"mongo": 27017,
-	"mysql": 3306,
+	"ssh":       22,
+	"redis":     6379,
+	"mongo":     27017,
+	"mysql":     3306,
+	"timescale": 5432,
+	"pgbouncer": 6432,
 }
 
 type SecurityGroup struct {
-	ID          string
-	Name        string
-	Description string
-	Tags        []types.Tag
-	rules       []SecurityGroupRule
+	ID           string
+	Name         string
+	Description  string
+	Tags         []types.Tag
+	rules        []SecurityGroupRule
+	allowedRules map[string]bool // extracted from tag: "onyx:rules"
 }
 
 type SecurityGroupRule struct {
@@ -38,6 +41,28 @@ type SecurityGroupRule struct {
 	cidr        string
 	protocol    string
 	description string
+}
+
+type Filter struct {
+	Key   string
+	Value string
+}
+
+type SecurityGroupToAlter struct {
+	SecurityGroup SecurityGroup
+	Ports         map[int32]bool
+}
+
+func ExtractFilter(filterStr string) *Filter {
+	filterArray := strings.Split(filterStr, "=")
+	if len(filterArray) == 2 {
+		return &Filter{
+			Key:   strings.ToLower(filterArray[0]),
+			Value: strings.ToLower(filterArray[1]),
+		}
+	}
+
+	return &Filter{}
 }
 
 func NewSecurityGroup(ctx context.Context, cfg aws.Config, id string) (*SecurityGroup, error) {
@@ -125,11 +150,9 @@ func (sg *SecurityGroup) FilterIngressRules(securityGroupRules *[]SecurityGroupR
 	return
 }
 
-func (sg *SecurityGroup) Authorize(ctx context.Context, cfg aws.Config, rules *[]SecurityGroupRule) {
+func (sg *SecurityGroup) Authorize(ctx context.Context, cfg aws.Config, rules *[]SecurityGroupRule, publicIP string) {
 	logger.Info("Authorizing new rules for %s", logger.Bold(sg.ID))
 	ec2Handler := ec2Lib.NewFromConfig(cfg)
-
-	publicIP := utils.GetPublicIP()
 
 	ipPermissions := make([]types.IpPermission, 0)
 	for i, rule := range *rules {
@@ -166,24 +189,36 @@ func (sg *SecurityGroup) Authorize(ctx context.Context, cfg aws.Config, rules *[
 	sg.DisplaySecurityGroup(ctx, cfg, rules, false)
 }
 
-func (sg *SecurityGroup) Revoke(ctx context.Context, cfg aws.Config, rules []SecurityGroupRule) error {
+// Revoke revokes the given rules from security groups
+func (sg *SecurityGroup) Revoke(ctx context.Context, cfg aws.Config, rules []SecurityGroupRule, newCidr string, followedByAuthorize bool) error {
+	if len(rules) == 0 {
+		return nil
+	}
+
+	ipranges := make([]types.IpRange, 0)
+	for _, rule := range rules {
+		ipranges = append(ipranges, types.IpRange{
+			CidrIp:      aws.String(rule.cidr),
+			Description: aws.String(rule.description),
+		})
+	}
+
+	// if len(ipranges) == 0 {
+	// 	logger.Warn("No changes to be done for %s. IP(%s) didn't change", sg.Name, newCidr)
+	// 	return nil
+	// }
+
 	sg.DisplaySecurityGroup(ctx, cfg, &rules, true)
 
 	logger.Info("Revoking old rules for %s", logger.Bold(sg.ID))
 
-	ipPermissions := make([]types.IpPermission, 0)
-	for _, rule := range rules {
-		ipPermissions = append(ipPermissions, types.IpPermission{
-			FromPort:   rule.port,
+	ipPermissions := []types.IpPermission{
+		{
+			FromPort:   rules[0].port,
+			ToPort:     rules[0].port,
 			IpProtocol: aws.String("tcp"),
-			ToPort:     rule.port,
-			IpRanges: []types.IpRange{
-				{
-					CidrIp:      &rule.cidr,
-					Description: &rule.description,
-				},
-			},
-		})
+			IpRanges:   ipranges,
+		},
 	}
 
 	ec2Handler := ec2Lib.NewFromConfig(cfg)
@@ -205,33 +240,123 @@ func (sg *SecurityGroup) Revoke(ctx context.Context, cfg aws.Config, rules []Sec
 	}
 
 	sg.DisplaySecurityGroup(ctx, cfg, nil, false)
-	return errors.New("Unable to revoke old rules")
+	return errors.New("unable to revoke old rules")
 }
 
-func SelectSecurityGroups(ctx context.Context, cfg aws.Config, env string) ([]SecurityGroup, error) {
-	securityGroups, err := ListSecurityGroupsByEnv(ctx, cfg, env)
+func SelectSecurityGroups(
+	ctx context.Context,
+	cfg aws.Config,
+	env string,
+	filters *[]Filter,
+	skipChoice bool,
+	baseRuleType []int32,
+) (map[string]SecurityGroupToAlter, error) {
+	ruleTypeSecurityGroupsMap := make(map[string]SecurityGroupToAlter)
+
+	allSecurityGroups, err := ListSecurityGroupsByEnv(ctx, cfg, env)
 	if err != nil {
-		return nil, err
+		return ruleTypeSecurityGroupsMap, err
+	}
+
+	if len(allSecurityGroups) == 0 {
+		return ruleTypeSecurityGroupsMap, nil
+	}
+
+	securityGroups := applyFilters(&allSecurityGroups, filters)
+	if len(*securityGroups) == 0 {
+		return ruleTypeSecurityGroupsMap, nil
+	}
+
+	if len(*securityGroups) == 1 && skipChoice {
+		securityGroupToAlter := SecurityGroupToAlter{
+			SecurityGroup: (*securityGroups)[0],
+			Ports:         make(map[int32]bool),
+		}
+
+		for _, port := range baseRuleType {
+			securityGroupToAlter.Ports[port] = true
+		}
+
+		if len(securityGroupToAlter.Ports) == 0 {
+			return ruleTypeSecurityGroupsMap, errors.New("no rules to authorize")
+		}
+
+		ruleTypeSecurityGroupsMap[(*securityGroups)[0].ID] = securityGroupToAlter
+
+		return ruleTypeSecurityGroupsMap, nil
 	}
 
 	logger.Info("Select security groups:")
-	for i, securityGroup := range securityGroups {
+	for i, securityGroup := range *securityGroups {
 		fmt.Println(logger.Bold(i), ":", securityGroup.ID, "(", logger.Italic(securityGroup.Name), ")")
 	}
 
-	indexes := utils.GetUserInput("Enter Choice: ")
+	choices := utils.GetUserInput("Enter Choice: ")
 
-	if len(indexes) == 0 {
+	if len(choices) == 0 {
 		return nil, errors.New(logger.Bold("Invalid choice"))
 	}
 
-	selectedSecurityGroups := make([]SecurityGroup, 0)
-	for _, index := range strings.Split(indexes, ",") {
-		i, _ := strconv.ParseInt(strings.TrimSpace(index), 0, 32)
-		selectedSecurityGroups = append(selectedSecurityGroups, securityGroups[int(i)])
+	if strings.Contains(choices, ":") {
+		for _, choice := range strings.Split(choices, " ") {
+			choiceArr := strings.Split(choice, ":")
+			if len(choiceArr) != 2 {
+				continue
+			}
+
+			index := choiceArr[0]
+			ruleTypeArr := strings.Split(strings.TrimSpace(choiceArr[1]), ",")
+
+			i, _ := strconv.ParseInt(strings.TrimSpace(index), 0, 32)
+			if i >= 0 && i < int64(len(*securityGroups)) {
+				securityGroup := (*securityGroups)[int(i)]
+
+				securityGroupToAlter := SecurityGroupToAlter{
+					SecurityGroup: securityGroup,
+					Ports:         make(map[int32]bool),
+				}
+
+				if value, ok := ruleTypeSecurityGroupsMap[securityGroup.ID]; ok {
+					securityGroupToAlter = value
+				}
+
+				for _, rule := range ruleTypeArr {
+					if value, ok := allowedRules[strings.ToLower(rule)]; ok {
+						securityGroupToAlter.Ports[value] = true
+					}
+				}
+
+				ruleTypeSecurityGroupsMap[securityGroup.ID] = securityGroupToAlter
+			}
+		}
+	} else {
+		for _, index := range strings.Split(choices, ",") {
+			i, _ := strconv.ParseInt(strings.TrimSpace(index), 0, 32)
+			fmt.Println(i)
+			if i >= 0 && i < int64(len(*securityGroups)) {
+				securityGroupToAlter := SecurityGroupToAlter{
+					SecurityGroup: (*securityGroups)[i],
+					Ports:         make(map[int32]bool),
+				}
+
+				for _, port := range baseRuleType {
+					securityGroupToAlter.Ports[port] = true
+				}
+
+				if len(securityGroupToAlter.Ports) == 0 {
+					continue
+				}
+
+				ruleTypeSecurityGroupsMap[(*securityGroups)[i].ID] = securityGroupToAlter
+			}
+		}
 	}
 
-	return selectedSecurityGroups, nil
+	if len(ruleTypeSecurityGroupsMap) == 0 {
+		return ruleTypeSecurityGroupsMap, errors.New("no rules to authorize")
+	}
+
+	return ruleTypeSecurityGroupsMap, nil
 }
 
 // ListSecurityGroupsByEnv returns all security groups filtered by Tag:Environment if provided
@@ -265,7 +390,7 @@ func convertSecurityGroups(libSecurityGroups *[]types.SecurityGroup) (securityGr
 			for _, iprange := range ipp.IpRanges {
 				rules = append(rules, SecurityGroupRule{
 					cidr:        *iprange.CidrIp,
-					description: *iprange.Description,
+					description: aws.ToString(iprange.Description),
 					port:        ipp.FromPort,
 					protocol:    aws.ToString(ipp.IpProtocol),
 				})
@@ -281,30 +406,86 @@ func convertSecurityGroups(libSecurityGroups *[]types.SecurityGroup) (securityGr
 			}
 		}
 
+		allowedRulesForSecurityGroup := make(map[string]bool)
+		for _, tag := range securityGroup.Tags {
+			if aws.ToString(tag.Key) == "onyx:rules" {
+				for _, rt := range strings.Split(aws.ToString(tag.Value), ",") {
+					allowedRulesForSecurityGroup[rt] = true
+				}
+			}
+		}
+
 		securityGroups = append(securityGroups, SecurityGroup{
-			ID:          *securityGroup.GroupId,
-			Name:        aws.ToString(securityGroup.GroupName),
-			Tags:        securityGroup.Tags,
-			Description: aws.ToString(securityGroup.Description),
-			rules:       rules,
+			ID:           *securityGroup.GroupId,
+			Name:         aws.ToString(securityGroup.GroupName),
+			Tags:         securityGroup.Tags,
+			Description:  aws.ToString(securityGroup.Description),
+			rules:        rules,
+			allowedRules: allowedRulesForSecurityGroup,
 		})
 	}
 
 	return
 }
 
-func AuthorizeOrRevokeRule(envOrID string, types []string, ports []int32, authorize bool) error {
-	portsToUpdate := make([]int32, 0)
-	for _, t := range types {
-		if value, ok := allowedRules[strings.ToLower(t)]; !ok {
-			return errors.New("Invalid type. Allowed values: ssh|redis|mongo|mysql")
-		} else {
-			portsToUpdate = append(portsToUpdate, value)
+func applyFilters(securityGroups *[]SecurityGroup, filters *[]Filter) *[]SecurityGroup {
+	if filters == nil || len(*filters) == 0 {
+		return securityGroups
+	}
+
+	filteredSecurityGroups := make([]SecurityGroup, 0)
+
+	for _, filter := range *filters {
+		if filter.Key == "name" {
+			for _, securityGroup := range *securityGroups {
+				if strings.Contains(securityGroup.Name, filter.Value) {
+					filteredSecurityGroups = append(filteredSecurityGroups, securityGroup)
+				}
+			}
 		}
 	}
 
-	for _, port := range ports {
-		portsToUpdate = append(portsToUpdate, port)
+	return &filteredSecurityGroups
+}
+
+func AuthorizeOrRevokeRule(
+	envOrID string,
+	types []string,
+	ports []int32,
+	filters []string,
+	skipChoice,
+	authorize bool,
+) error {
+	filtersToApply := make([]Filter, 0)
+	if len(filters) > 0 {
+		for _, filter := range filters {
+			filterObj := ExtractFilter(filter)
+			if filterObj.Key != "" && filterObj.Value != "" {
+				filtersToApply = append(filtersToApply, *filterObj)
+			}
+		}
+	}
+
+	portsToUpdate := make([]int32, 0)
+	for _, t := range types {
+		if value, ok := allowedRules[strings.ToLower(t)]; ok {
+			portsToUpdate = append(portsToUpdate, value)
+		} else {
+			allowedRulesArray := make([]string, len(allowedRules))
+
+			i := 0
+			for r := range allowedRules {
+				allowedRulesArray[i] = r
+				i++
+			}
+			return errors.New("invalid type. Allowed values: " + strings.Join(allowedRulesArray, "|"))
+		}
+	}
+
+	portsToUpdate = append(portsToUpdate, ports...)
+
+	if len(portsToUpdate) == 0 {
+		return errors.New("no ports to authorize")
 	}
 
 	securityGroupUser, err := iam.Whoami()
@@ -313,7 +494,7 @@ func AuthorizeOrRevokeRule(envOrID string, types []string, ports []int32, author
 	}
 
 	if securityGroupUser == "" || len(securityGroupUser) < 3 {
-		return errors.New("Invalid user")
+		return errors.New("invalid user")
 	}
 
 	cfg, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion("us-east-1"))
@@ -322,7 +503,7 @@ func AuthorizeOrRevokeRule(envOrID string, types []string, ports []int32, author
 	}
 	ctx := context.Background()
 
-	var securityGroups []SecurityGroup
+	securityGroups := make(map[string]SecurityGroupToAlter)
 	if strings.HasPrefix(envOrID, "sg-") {
 		securityGroup, err := NewSecurityGroup(ctx, cfg, envOrID)
 		if err != nil {
@@ -331,32 +512,56 @@ func AuthorizeOrRevokeRule(envOrID string, types []string, ports []int32, author
 
 		logger.Success("Detected security group: %s (%s)", logger.Bold(securityGroup.ID), logger.Italic(securityGroup.Name))
 
-		securityGroups = append(securityGroups, *securityGroup)
+		securityGroups[securityGroup.ID] = SecurityGroupToAlter{
+			SecurityGroup: *securityGroup,
+			Ports:         make(map[int32]bool),
+		}
+
+		for _, port := range portsToUpdate {
+			if _, ok := securityGroups[securityGroup.ID].Ports[port]; !ok {
+				securityGroups[securityGroup.ID].Ports[port] = true
+			}
+		}
 	} else {
-		selectedSecurityGroups, err := SelectSecurityGroups(ctx, cfg, strings.Title(strings.ToLower(envOrID)))
+		selectedSecurityGroups, err := SelectSecurityGroups(ctx, cfg, strings.Title(strings.ToLower(envOrID)), &filtersToApply, skipChoice, portsToUpdate)
 		if err != nil {
 			return err
 		}
 
-		securityGroups = append(securityGroups, selectedSecurityGroups...)
+		securityGroups = selectedSecurityGroups
 	}
 
-	sgRules := make([]SecurityGroupRule, 0)
-	for _, port := range portsToUpdate {
-		sgRule, _ := NewSecurityGroupRule(port, securityGroupUser)
-		sgRules = append(sgRules, *sgRule)
+	if len(securityGroups) == 0 {
+		logger.Warn("No security group matched. Exiting")
+		return nil
 	}
 
-	for _, securityGroup := range securityGroups {
-		rules := securityGroup.FilterIngressRules(&sgRules)
+	publicIP := utils.GetPublicIP()
+
+	for _, sgAlter := range securityGroups {
+		ports := make([]int32, 0)
+		for port := range sgAlter.Ports {
+			ports = append(ports, port)
+		}
+
+		logger.Info("Processing %v ports for %s (%s)", logger.Bold(ports), logger.Underline(sgAlter.SecurityGroup.Name), sgAlter.SecurityGroup.ID)
+
+		sgRules := make([]SecurityGroupRule, 0)
+		for port := range sgAlter.Ports {
+			sgRule, _ := NewSecurityGroupRule(port, securityGroupUser)
+			sgRules = append(sgRules, *sgRule)
+		}
+
+		rules := sgAlter.SecurityGroup.FilterIngressRules(&sgRules)
 		if len(rules) > 0 {
-			if err := securityGroup.Revoke(ctx, cfg, rules); err != nil {
-				return err
+			if err := sgAlter.SecurityGroup.Revoke(ctx, cfg, rules, publicIP, authorize); err != nil {
+				logger.Error("Error on revoking rules for %s (%s). Error: %s", sgAlter.SecurityGroup.Name, sgAlter.SecurityGroup.ID, err.Error())
+				continue
 			}
 		}
 
 		if authorize {
-			securityGroup.Authorize(ctx, cfg, &sgRules)
+			sgAlter.SecurityGroup.Authorize(ctx, cfg, &sgRules, publicIP)
 		}
 	}
 

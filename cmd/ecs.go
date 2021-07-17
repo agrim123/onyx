@@ -2,9 +2,10 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"log"
 
-	"github.com/agrim123/onyx/pkg/core/ecs"
+	"bitbucket.org/agrim123/onyx/pkg/core/ecs"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/spf13/cobra"
 )
@@ -30,7 +31,11 @@ var ecsDescribeCommand = &cobra.Command{
 		}
 		ctx := context.Background()
 
-		return ecs.Describe(ctx, cfg, ecsClusterName, ecsServiceName)
+		if ecsClusterName == "" {
+			return errors.New("empty cluster name")
+		}
+
+		return ecs.Describe(ctx, cfg, ecsServiceName, ecsClusterName)
 	},
 }
 
@@ -38,7 +43,7 @@ var ecsRestartServiceCommand = &cobra.Command{
 	Use:     "restart --cluster <cluster-name> [--service <service-name>]",
 	Short:   "Forces new deployment of ECS services",
 	Long:    `Triggers redployment of the chosen services of a cluster. If service name is provided it restarts only the exact matching input, else fails.`,
-	Example: "onyx ecs restart --cluster staging-api-cluster\nonyx ecs restart --cluster staging-api-cluster --service backtest_services",
+	Example: "onyx ecs restart --cluster staging-api-cluster\nonyx ecs restart --cluster staging-api-cluster --service some_service",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion("us-east-1"))
 		if err != nil {
@@ -50,14 +55,29 @@ var ecsRestartServiceCommand = &cobra.Command{
 	},
 }
 
+var ecsUpdateContainerInstanceCommand = &cobra.Command{
+	Use:     "update-agent",
+	Short:   "Updates container agents for all attached container instances",
+	Long:    ``,
+	Example: "onyx ecs update-agent",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion("us-east-1"))
+		if err != nil {
+			log.Fatalf("unable to load SDK config, %v", err)
+		}
+		ctx := context.Background()
+
+		return ecs.UpdateContainerAgent(ctx, cfg)
+	},
+}
+
 func init() {
-	ecsCommand.AddCommand(ecsDescribeCommand, ecsRestartServiceCommand)
+	ecsCommand.AddCommand(ecsDescribeCommand, ecsRestartServiceCommand, ecsUpdateContainerInstanceCommand)
 
 	ecsRestartServiceCommand.Flags().StringVarP(&ecsClusterName, "cluster", "c", "", "Cluster Name (required)")
 	ecsRestartServiceCommand.MarkFlagRequired("cluster")
 	ecsRestartServiceCommand.Flags().StringVarP(&ecsServiceName, "service", "s", "", "Service Name")
 
 	ecsDescribeCommand.Flags().StringVarP(&ecsClusterName, "cluster", "c", "", "Cluster Name (required)")
-	ecsDescribeCommand.MarkFlagRequired("cluster")
 	ecsDescribeCommand.Flags().StringVarP(&ecsServiceName, "service", "s", "", "Filters tasks belonging to the service name provided. Returns the best matching service tasks.")
 }

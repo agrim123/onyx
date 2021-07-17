@@ -7,27 +7,49 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/agrim123/onyx/pkg/logger"
+	"bitbucket.org/agrim123/onyx/pkg/logger"
 )
 
-func GetPublicIP() string {
-	url := "https://api.ipify.org?format=text" // we are using a pulib IP API, we're using ipify here, below are some others
-	// https://www.ipify.org
-	// http://myexternalip.com/raw
-	// http://ident.me
-	// http://whatismyipaddress.com/api
-	logger.Info("Getting IP address from ipify")
-	resp, err := http.Get(url)
-	if err != nil {
-		panic(err)
-	}
-	defer resp.Body.Close()
-	ip, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		panic(err)
+var sources = []string{
+	"https://api.ipify.org?format=text",
+	"https://api64.ipify.org/?format=text",
+	"https://www.ipify.org",
+	"https://myexternalip.com/raw",
+}
+
+func getIP() string {
+	for _, source := range sources {
+		logger.Info("Getting IP address from %s", logger.Underline(source))
+		resp, err := http.Get(source)
+		if err != nil {
+			logger.Error("Unable to get ip from %s. Error: %v", logger.Underline(source), err)
+			continue
+		}
+
+		defer resp.Body.Close()
+		ip, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			logger.Error("Unable to read ip from response %s. Error: %s", logger.Underline(source), err.Error())
+			continue
+		} else {
+			return string(ip)
+		}
 	}
 
-	return fmt.Sprintf("%s/32", string(ip))
+	return ""
+}
+
+func GetPublicIP() string {
+	ip := getIP()
+	if ip == "" {
+		logger.Fatal("Unable to determine ip")
+	}
+
+	cidr := fmt.Sprintf("%s/32", ip)
+
+	logger.Success("Authorizing for CIDR: " + cidr)
+
+	return cidr
 }
 
 func GetChunks(arr []string, chunkSize int) [][]string {

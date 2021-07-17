@@ -3,6 +3,7 @@ package ec2
 import (
 	"context"
 
+	"bitbucket.org/agrim123/onyx/pkg/logger"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	ec2Lib "github.com/aws/aws-sdk-go-v2/service/ec2"
 )
@@ -38,4 +39,30 @@ func DescribeInstances(ctx context.Context, cfg aws.Config, instanceIDs []string
 	}
 
 	return &instances, nil
+}
+
+func StopInstance(ctx context.Context, cfg aws.Config, instanceID string) error {
+	ec2Handler := ec2Lib.NewFromConfig(cfg)
+	_, err := ec2Handler.StopInstances(ctx, &ec2Lib.StopInstancesInput{
+		InstanceIds: []string{instanceID},
+	})
+	if err != nil {
+		return err
+	}
+
+	logger.Success("Stopped instance %s", instanceID)
+	return nil
+}
+
+func StartInstance(ctx context.Context, cfg aws.Config, instanceID string) error {
+	ec2Handler := ec2Lib.NewFromConfig(cfg)
+	_, err := ec2Handler.StartInstances(ctx, &ec2Lib.StartInstancesInput{
+		InstanceIds: []string{instanceID},
+	})
+	if err != nil {
+		return err
+	}
+
+	logger.Success("Started instance %s", instanceID)
+	return nil
 }

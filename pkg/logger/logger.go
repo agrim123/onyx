@@ -2,6 +2,7 @@ package logger
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/fatih/color"
 )
@@ -22,6 +23,12 @@ func Warn(message string, attributes ...interface{}) {
 func Error(message string, attributes ...interface{}) {
 	red.PrintFunc()("[ERROR]   | ")
 	fmt.Println(fmt.Sprintf(message, attributes...))
+}
+
+func Fatal(message string, attributes ...interface{}) {
+	red.PrintFunc()("[FATAL]   | ")
+	fmt.Println(fmt.Sprintf(message, attributes...))
+	os.Exit(1)
 }
 
 func Success(message string, attributes ...interface{}) {

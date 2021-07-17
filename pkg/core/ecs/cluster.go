@@ -2,19 +2,34 @@ package ecs
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
-	"github.com/agrim123/onyx/pkg/utils"
+	"bitbucket.org/agrim123/onyx/pkg/utils"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	ecsLib "github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/aws/aws-sdk-go-v2/service/ecs/types"
 )
 
 type Cluster struct {
-	Arn                *string
 	Name               string
 	Services           []Service
 	ContainerInstances int
+}
+
+func (c *Cluster) Print() {
+	fmt.Println("Cluster name:", c.Name)
+	// fmt.Println("Registered container instances:", c.ContainerInstances)
+
+	for _, service := range c.Services {
+		fmt.Println("Service Name:", service.Name)
+		// fmt.Println("  Task Definition:", service.TaskDefinitionArn)
+		fmt.Println("  Tasks:")
+		for _, task := range service.Tasks {
+			// fmt.Println("    Arn:", *task.Arn)
+			fmt.Println("    IP:", task.ContainerInstance.Instance.PrivateIPv4)
+		}
+	}
 }
 
 func (c *Cluster) GetServices(ctx context.Context, cfg aws.Config, serviceName string) error {
@@ -25,11 +40,14 @@ func (c *Cluster) GetServices(ctx context.Context, cfg aws.Config, serviceName s
 
 	var nextToken *string
 	for {
-		allServicesOutput, _ := ecsHandler.ListServices(ctx, &ecsLib.ListServicesInput{
+		allServicesOutput, err := ecsHandler.ListServices(ctx, &ecsLib.ListServicesInput{
 			Cluster:            aws.String(c.Name),
 			NextToken:          nextToken,
 			SchedulingStrategy: types.SchedulingStrategyReplica,
 		})
+		if err != nil {
+			return err
+		}
 
 		allServicesArns = append(allServicesArns, allServicesOutput.ServiceArns...)
 
@@ -86,4 +104,29 @@ func (c *Cluster) FilterServicesByName(serviceName string) {
 
 		c.Services = filteredServices
 	}
+}
+
+func ListClusters(ctx context.Context, cfg aws.Config, nameFilter string) (*[]Cluster, error) {
+	ecsHandler := ecsLib.NewFromConfig(cfg)
+	output, err := ecsHandler.ListClusters(ctx, &ecsLib.ListClustersInput{})
+	if err != nil {
+		return nil, err
+	}
+
+	clusters := make([]Cluster, 0)
+	for _, arn := range output.ClusterArns {
+		if nameFilter == "" {
+			clusters = append(clusters, Cluster{
+				Name: arn,
+			})
+		} else {
+			if strings.Contains(arn, nameFilter) {
+				clusters = append(clusters, Cluster{
+					Name: arn,
+				})
+			}
+		}
+	}
+
+	return &clusters, nil
 }

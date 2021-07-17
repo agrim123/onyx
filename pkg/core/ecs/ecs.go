@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/agrim123/onyx/pkg/core/ec2"
-	"github.com/agrim123/onyx/pkg/logger"
-	"github.com/agrim123/onyx/pkg/utils"
+	"bitbucket.org/agrim123/onyx/pkg/core/ec2"
+	"bitbucket.org/agrim123/onyx/pkg/logger"
+	"bitbucket.org/agrim123/onyx/pkg/utils"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	ecsLib "github.com/aws/aws-sdk-go-v2/service/ecs"
 )
@@ -19,7 +19,20 @@ type ContainerInstance struct {
 	Instance ec2.Instance
 }
 
-func Describe(ctx context.Context, cfg aws.Config, clusterName, serviceName string) error {
+func Describe(ctx context.Context, cfg aws.Config, serviceName, nameFilter string) error {
+	clusters, err := ListClusters(ctx, cfg, nameFilter)
+	if err != nil {
+		return err
+	}
+
+	for _, cluster := range *clusters {
+		DescribeByCluster(ctx, cfg, cluster.Name, serviceName)
+	}
+
+	return nil
+}
+
+func DescribeByCluster(ctx context.Context, cfg aws.Config, clusterName, serviceName string) error {
 	if serviceName == "" {
 		logger.Warn("Service name is not provided. This results in large query, please consider narrowing your search.")
 	}
@@ -58,6 +71,10 @@ func Describe(ctx context.Context, cfg aws.Config, clusterName, serviceName stri
 		ContainerInstances: containerInstancesArns,
 		Cluster:            &clusterName,
 	})
+
+	if err != nil {
+		return err
+	}
 
 	instanceIDsMap := make(map[string]ec2.Instance)
 	for _, containerInstance := range containerInstances.ContainerInstances {
@@ -113,19 +130,20 @@ func Describe(ctx context.Context, cfg aws.Config, clusterName, serviceName stri
 	}
 
 	cluster.Services = *allServices
+	cluster.Print()
 
-	fmt.Println("Cluster name:", cluster.Name)
-	// fmt.Println("Registered container instances:", cluster.ContainerInstances)
+	// fmt.Println("Cluster name:", cluster.Name)
+	// // fmt.Println("Registered container instances:", cluster.ContainerInstances)
 
-	for _, service := range cluster.Services {
-		fmt.Println("Service Name:", service.Name)
-		// fmt.Println("  Task Definition:", service.TaskDefinitionArn)
-		fmt.Println("  Tasks:")
-		for _, task := range service.Tasks {
-			// fmt.Println("    Arn:", *task.Arn)
-			fmt.Println("    IP:", task.ContainerInstance.Instance.PrivateIPv4)
-		}
-	}
+	// for _, service := range cluster.Services {
+	// 	fmt.Println("Service Name:", service.Name)
+	// 	// fmt.Println("  Task Definition:", service.TaskDefinitionArn)
+	// 	fmt.Println("  Tasks:")
+	// 	for _, task := range service.Tasks {
+	// 		// fmt.Println("    Arn:", *task.Arn)
+	// 		fmt.Println("    IP:", task.ContainerInstance.Instance.PrivateIPv4)
+	// 	}
+	// }
 
 	return nil
 }
@@ -151,7 +169,7 @@ func RedeployService(ctx context.Context, cfg aws.Config, clusterName, serviceNa
 
 	indexes := utils.GetUserInput("Enter choice: ")
 	if len(indexes) == 0 {
-		return errors.New("Invalid choice")
+		return errors.New("invalid choice")
 	}
 
 	for _, index := range strings.Split(indexes, ",") {
@@ -165,7 +183,7 @@ func RedeployService(ctx context.Context, cfg aws.Config, clusterName, serviceNa
 	}
 
 	if len(services) == 0 {
-		return fmt.Errorf("No services to restart.")
+		return errors.New("no services to restart")
 	}
 
 	for _, service := range services {
@@ -180,6 +198,42 @@ func RedeployService(ctx context.Context, cfg aws.Config, clusterName, serviceNa
 			fmt.Println("Unable to restart " + service + ". Error: " + err.Error())
 		} else {
 			fmt.Println("Restarted " + service)
+		}
+	}
+
+	return nil
+}
+
+func UpdateContainerAgent(ctx context.Context, cfg aws.Config) error {
+	ecsHandler := ecsLib.NewFromConfig(cfg)
+	clusterOutput, err := ecsHandler.ListClusters(ctx, &ecsLib.ListClustersInput{})
+	if err != nil {
+		return err
+	}
+
+	containerInstances := make(map[string][]string)
+	for _, cluster := range clusterOutput.ClusterArns {
+		containerInstancesOutput, err := ecsHandler.ListContainerInstances(ctx, &ecsLib.ListContainerInstancesInput{
+			Cluster: aws.String(cluster),
+		})
+		if err != nil {
+			logger.Error("Unable to get container instances for cluster %s. Error: %s", logger.Underline(cluster), err.Error())
+			continue
+		}
+
+		containerInstances[cluster] = containerInstancesOutput.ContainerInstanceArns
+	}
+
+	for cluster, containerInstances := range containerInstances {
+		for _, containerInstance := range containerInstances {
+			_, err := ecsHandler.UpdateContainerAgent(ctx, &ecsLib.UpdateContainerAgentInput{
+				Cluster:           aws.String(cluster),
+				ContainerInstance: aws.String(containerInstance),
+			})
+			if err != nil {
+				logger.Error("Unable to update container agent for cluster %s and container instance %s. Error: %s", logger.Underline(cluster), logger.Underline(containerInstance), err.Error())
+				continue
+			}
 		}
 	}
 

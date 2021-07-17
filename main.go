@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/agrim123/onyx/cmd"
+	"bitbucket.org/agrim123/onyx/cmd"
 )
 
 func main() {
